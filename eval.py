@@ -60,7 +60,13 @@ class BLEUScorer(object):
 
         # computing bleu score
         p0 = 1e-7
-        bp = 1 if c > r else math.exp(1 - float(r) / float(c))
+        if c == 0:
+            bp = 0
+            pdb.set_trace()
+        elif c > r:
+            bp = 1
+        else:
+            bp = math.exp(1 - float(r) / float(c))
         p_ns = [float(clip_count[i]) / float(count[i] + p0) + p0 \
                 for i in range(4)]
         s = math.fsum(w * math.log(p_n) \
@@ -204,6 +210,8 @@ class MultiWozEvaluator(object):
             truth.append(row['resp'])
         wrap_generated = [[_] for _ in gen]
         wrap_truth = [[_] for _ in truth]
+        if wrap_generated == [[]]:
+            pdb.set_trace()
         if gen and truth:
             sc = self.bleu_scorer.score(zip(wrap_generated, wrap_truth))
         else:

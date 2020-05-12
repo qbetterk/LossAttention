@@ -8,6 +8,7 @@ from torch.autograd import Variable
 from torch.distributions import Categorical
 import utils
 from config import global_config as cfg
+from teacher import TeacherModel
 import pdb
 
 np.set_printoptions(precision=2,suppress=True)
@@ -92,6 +93,7 @@ class Attn(nn.Module):
         :param hidden: tensor of size [n_layer, B, H]
         :param encoder_outputs: tensor of size [B,T, H]
         """
+        # pdb.set_trace()
         attn_energies = self.score(hidden, encoder_outputs)   # [B,T,H]
         if mask is None:
             normalized_energy = F.softmax(attn_energies, dim=2)  # [B,1,T]
@@ -108,9 +110,6 @@ class Attn(nn.Module):
     def score(self, hidden, encoder_outputs):
         max_len = encoder_outputs.size(1)
         H = hidden.repeat(max_len, 1, 1).transpose(0, 1)   # [B,T,H]
-        # pdb.set_trace()
-        # tmp = torch.cat([H, encoder_outputs], 2)
-        # tmp2 = self.attn(tmp)
 
         energy = torch.tanh(self.attn(torch.cat([H, encoder_outputs], 2)))  # [B,T,2H]->[B,T,H]
         energy = self.v(energy).transpose(1,2)   # [B,1,T]
@@ -199,8 +198,8 @@ class transformerEncoder(nn.Module):
         self.hidden_size = cfg.hidden_size
 
         self.dropout = cfg.dropout
-        encoder_layers = nn.TransformerEncoderLayer(self.embed_size, 5, self.hidden_size, self.dropout)
-        self.gru = nn.TransformerEncoder(encoder_layers, 3)
+        encoder_layers = nn.TransformerEncoderLayer(self.embed_size, cfg.trans_enc_head_num, self.hidden_size, self.dropout)
+        self.gru = nn.TransformerEncoder(encoder_layers, cfg.trans_enc_layer_num)
 
     def forward(self, input_seqs, input_lens=None, hidden=None):
         """
@@ -211,26 +210,10 @@ class transformerEncoder(nn.Module):
         :return:
         """
         embedded = self.embedding(input_seqs)
-        # embedded = embedded.transpose(0, 1)  # [B,T,E]
-        # sort_idx = np.argsort(-input_lens)
-        # unsort_idx = cuda_(torch.LongTensor(np.argsort(sort_idx)))
-        # input_lens = input_lens[sort_idx]
-        # sort_idx = cuda_(torch.LongTensor(sort_idx))
-        # embedded = embedded[sort_idx].transpose(0, 1)  # [T,B,E]
-        
-        #packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, input_lens)
-        #outputs, hidden = self.gru(packed, hidden)
-        #outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs)
         outputs = self.gru(embedded)
-        outputs = torch.cat([outputs, outputs], 2)
-        hidden = outputs[-2:]
-        # #print("hidden: ",hidden.shape)
+        outputs = torch.cat([outputs, outputs], 2)  # [B,T,H]
+        hidden = outputs.transpose(0,1)[-2:]        # [2,B,H]
 
-        # #outputs = outputs[:, :, :self.hidden_size] + outputs[:, :, self.hidden_size:]
-        # outputs = outputs.transpose(0, 1)[unsort_idx].transpose(0, 1).contiguous()
-        # hidden = hidden.transpose(0, 1)[unsort_idx].transpose(0, 1).contiguous()
-        # #print("hidden2: ",hidden.shape)
-        # pdb.set_trace()
         return outputs, hidden
 
 class biGRUencoder(nn.Module):
@@ -260,7 +243,6 @@ class biGRUencoder(nn.Module):
         #self.gru.flatten_parameters()
         outputs, hidden = self.gru(embedded, hidden)
         # print(outputs.size())
-        # pdb.set_trace()
         outputs = outputs[:, :, :self.hidden_size] + outputs[:, :, self.hidden_size:]
         return outputs, hidden
 
@@ -282,57 +264,6 @@ class Copy(nn.Module):
         raw_cp_score = torch.tanh(self.Wcopy(enc_out_hs))   #[B,Tenc,H]
         raw_cp_score = torch.einsum('beh,bdh->bde',raw_cp_score, dec_hs)    #[B, Tdec, Tenc]
         return raw_cp_score * self.copy_weight
-
-# def get_final_scores(raw_scores, word_onehot_input, input_idx_oov, vocab_size_oov):
-#     """
-#     :param raw_scores: list of tensor of size [B, Tdec, V], [B, Tdec, Tenc1], [B, Tdec, Tenc1] ...
-#     :param word_onehot_input: list of nparray of size [B, Tenci, V+Tenci]
-#     :param input_idx_oov: list of nparray of size [B, Tenc]
-#     :param vocab_size_oov:
-#     :returns: tensor of size [B, Tdec, vocab_size_oov]
-#     """
-
-#     cum_idx = [score.size(2) for score in raw_scores]
-#     for i in range(len(cum_idx) - 1):
-#         cum_idx[i + 1] += cum_idx[i]
-#     cum_idx.insert(0, 0)
-#     logsoftmax = torch.nn.LogSoftmax(dim=2)
-#     normalized_scores = logsoftmax(torch.cat(raw_scores, dim=2))   #[B,Tdec, V+Tenc1+Tenc2+...]
-#     normalized_scores.size()
-
-#     # print('normalized_gen_scores:' , normalized_scores.cpu().detach().numpy()[0,:5, 0:40])
-
-
-#     gen_score = normalized_scores[:, :, cum_idx[0]:cum_idx[1]]   # [B, Tdec, V]
-#     Tdec = gen_score.size(1)
-#     B = gen_score.size(0)
-#     V = gen_score.size(2)
-
-#     total_score = cuda_(torch.zeros(B, Tdec, vocab_size_oov)).fill_(-1e20)   # [B, Tdec, vocab_size_oov]
-#     c_to_g_scores = []
-#     for i in range(1, len(cum_idx) - 1):
-#         cps = normalized_scores[:, :, cum_idx[i]:cum_idx[i+1]]   #[B, Tdec, Tenc_i]
-#         # print('normalized_cp_scores:' , cps.cpu().detach().numpy()[0,:5, 0:40])
-#         one_hot = word_onehot_input[i-1]   #[B, Tenc_i, V+Tenc_i]
-#         cps = torch.einsum('imj,ijn->imn', cps, one_hot)   #[B, Tdec, V+Tenc_i]
-#         cps[cps==0] = -1e20   # zero prob -> -inf log prob
-#         c_to_g_scores.append(cps[:, :, :V])
-#         cp_score = cps[:, :, V:]
-#         # avail_copy_idx = np.argwhere(input_idx_oov[i-1]>V)
-#         avail_copy_idx = (input_idx_oov[i-1]>V).nonzero()
-#         # print(len(copy_idx))
-#         for idx in avail_copy_idx:
-#             b, t = idx[0], idx[1]
-#             ts = total_score[b, :, input_idx_oov[i-1][b, t]].view(Tdec, 1)
-#             cs = cp_score[b, :, t].view(Tdec, 1)
-#             total_score[b, :, input_idx_oov[i-1][b, t]] = torch.logsumexp(torch.cat([ts, cs], 0), 0)
-
-#     m = torch.stack([gen_score] + c_to_g_scores, 3)
-#     # print(m[0, :30, :])
-#     gen_score = torch.logsumexp(m, 3)
-#     total_score[:, :, :V] = gen_score
-#     # print('total_score:' , total_score.cpu().detach().numpy()[0,:3, 0:40])
-#     return total_score.contiguous()   #[B, Tdec, vocab_size_oov]
 
 def get_final_scores(raw_scores, word_onehot_input, input_idx_oov, vocab_size_oov):
     """
@@ -387,7 +318,6 @@ def get_final_scores(raw_scores, word_onehot_input, input_idx_oov, vocab_size_oo
     total_score[:, :, :V] = gen_score
     # print('total_score:' , total_score.cpu().detach().numpy()[0,:3, 0:40])
     return total_score.contiguous()   #[B, Tdec, vocab_size_oov]
-
 
 class DomainSpanDecoder(nn.Module):
     def __init__(self, embedding, vocab_size_oov, Wgen=None, dropout=0.):
@@ -523,8 +453,6 @@ class BeliefSpanDecoder(nn.Module):
             self.mask_pvresp = (inputs['pv_resp']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
 
-        # print('user:', inputs['user'][0:2, :])
-        # pdb.set_trace()
         context_user = self.attn_user(dec_last_h, hidden_states['user'], self.mask_user)
         # context_user = self.attn_user(dec_last_h, huser, self.mask_user)
         gru_input.append(context_user)
@@ -766,13 +694,14 @@ class ResponseDecoder(nn.Module):
         if cfg.enable_aspn:
             gru_input_size += self.hidden_size
 
-        if cfg.transformer:
+        if cfg.transformer_dec:
 
-            decoder_layer = nn.TransformerDecoderLayer(d_model=self.hidden_size + self.embed_size + cfg.pointer_dim, 
-                                                       nhead=5,
+            decoder_layer = nn.TransformerDecoderLayer(d_model=gru_input_size, 
+                                                       nhead=cfg.trans_dec_head_num,
                                                        dim_feedforward=self.hidden_size,
                                                        dropout=cfg.dropout)
-            self.gru = nn.TransformerDecoder(decoder_layer, num_layers=cfg.dec_layer_num)
+            self.gru = nn.TransformerDecoder(decoder_layer, num_layers=cfg.trans_dec_layer_num)
+            self.linear_trans = nn.Linear(gru_input_size, self.hidden_size)
         else:
 
             self.gru = nn.GRU(gru_input_size , self.hidden_size, cfg.dec_layer_num,
@@ -800,10 +729,7 @@ class ResponseDecoder(nn.Module):
         self.dropout = dropout
         self.dropout_layer = nn.Dropout(self.dropout)  # input dropout
 
-
     def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, mode='train'):
-    # def forward(self, inputs, husdx, hbspn, haspn, dec_last_w, dec_last_h, first_turn, first_step):
-
         gru_input = []
         embed_last_w = self.embedding(dec_last_w)
         # embed_last_w = self.dropout_layer(embed_last_w)
@@ -836,10 +762,17 @@ class ResponseDecoder(nn.Module):
         gru_input.append(inputs['db'].unsqueeze(1))
 
         #self.gru.flatten_parameters()
-        pdb.set_trace()
-        gru_out, dec_last_h = self.gru(torch.cat(gru_input, 2), dec_last_h)   # [B, 1, H], [n_layer, B, H]
-        # gru_out should be the same with last_h in for 1-layer GRU decoder
-        # gru_out = self.dropout_layer(gru_out)
+        # pdb.set_trace()
+        if cfg.transformer_dec:
+            gru_in = torch.cat(gru_input, 2)
+            gru_out = self.gru(gru_in, gru_in)
+            dec_last_h = self.linear_trans(gru_out).transpose(0,1)
+        else:
+            gru_out, dec_last_h = self.gru(torch.cat(gru_input, 2), dec_last_h)   # [B, 1, H], [n_layer, B, H]
+
+            # gru_out should be the same with last_h in for 1-layer GRU decoder
+            # gru_out = self.dropout_layer(gru_out)
+    
 
         return dec_last_h
 
@@ -922,6 +855,8 @@ class DAMD(nn.Module):
         self.beam_width = cfg.beam_width
         self.nbest = cfg.nbest
 
+        self.token_weight = None
+
         # self.module_list = nn.ModuleList()
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
@@ -937,10 +872,11 @@ class DAMD(nn.Module):
             # self.module_list.append(self.usdx_encoder)
         self.span_encoder = biGRUencoder(self.embedding)
 
-        if cfg.transformer:
+        if cfg.transformer_enc:
             self.user_encoder = transformerEncoder(self.embedding)
             self.usdx_encoder = transformerEncoder(self.embedding)
             self.span_encoder = transformerEncoder(self.embedding)
+            self.resp_encoder = transformerEncoder(self.embedding)
 
 
         Wgen = nn.Linear(cfg.hidden_size, cfg.vocab_size) if cfg.copy_param_share else None
@@ -965,14 +901,13 @@ class DAMD(nn.Module):
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders['bspn'] = self.dst_decoder
 
-
         self.resp_decoder = ResponseDecoder(self.embedding, self.vsize_oov,
                                                                        Wgen = Wgen, dropout = self.dropout)
         self.decoders['resp'] = self.resp_decoder
 
 
-
-
+        self.teacher = TeacherModel()
+        self.token_weight = None
         self.nllloss = nn.NLLLoss(ignore_index=0)
         self.nonreduc_loss = nn.NLLLoss(ignore_index=0, reduction='none')
 
@@ -992,7 +927,18 @@ class DAMD(nn.Module):
             'dspn': False,
             'resp': False}
 
-
+    def forward(self, inputs, hidden_states, first_turn, mode):
+        if mode == 'train' or mode == 'valid':
+            # probs, hidden_states = \
+            probs = \
+                self.train_forward(inputs, hidden_states, first_turn)
+            total_loss, losses = self.supervised_loss(inputs, probs)
+            return total_loss, losses
+        elif mode == 'test':
+            decoded = self.test_forward(inputs, hidden_states, first_turn)
+            return decoded
+        elif mode == 'rl':
+            raise NotImplementedError('RL not available at the moment')
 
     def supervised_loss(self, inputs, probs):
         def weighted_nllloss(self, pred, inputs):
@@ -1007,12 +953,17 @@ class DAMD(nn.Module):
             if name != 'resp' or cfg.label_smoothing == .0:
                 pred = prob.view(-1, prob.size(2))   #[B,T,Voov] -> [B*T, Voov]
                 label = inputs[name+'_4loss'].view(-1)
+
                 if cfg.token_weight and name == 'resp':
-                    token_weight  = inputs['token_weight'].view(-1)
                     nonred_loss = self.nonreduc_loss(pred, label)
-                    if nonred_loss.shape != token_weight.shape:
+
+                    token_weights = self.token_weight.view(-1)
+
+                    if nonred_loss.shape != token_weights.shape:
                         pdb.set_trace()
-                    loss = torch.dot(nonred_loss, token_weight) / nonred_loss.shape[0]
+
+                    loss = torch.dot(nonred_loss, token_weights) / nonred_loss.shape[0]
+
                 else:
                     loss = self.nllloss(pred, label)
                 total_loss += loss
@@ -1035,19 +986,6 @@ class DAMD(nn.Module):
             losses['aspn_aug'] = 0
 
         return total_loss, losses
-
-    def forward(self, inputs, hidden_states, first_turn, mode):
-        if mode == 'train' or mode == 'valid':
-            # probs, hidden_states = \
-            probs = \
-                self.train_forward(inputs, hidden_states, first_turn)
-            total_loss, losses = self.supervised_loss(inputs, probs)
-            return total_loss, losses
-        elif mode == 'test':
-            decoded = self.test_forward(inputs, hidden_states, first_turn)
-            return decoded
-        elif mode == 'rl':
-            raise NotImplementedError('RL not available at the moment')
 
     def train_forward(self, inputs, hidden_states, first_turn):
         """
@@ -1079,7 +1017,9 @@ class DAMD(nn.Module):
                     hiddens.append(dec_last_h)
                     dec_last_w = inputs['aspn_aug_batch'][:, t].view(-1, 1)
 
-            dec_hs =  torch.cat(hiddens, dim=0).transpose(0,1)  # [1,B,H] ---> [B,T,H]
+            dec_hs = torch.cat(hiddens, dim=0).transpose(0,1)  # [1,B,H] ---> [B,T,H]
+            # dec_os = torch.cat(dec_outs, dim=1)                # [B,1,H] ---> [B,T,H]
+
             if bidx is None:
                 probs[name] = self.decoders[name].get_probs(inputs, hidden_states, dec_hs, first_turn)
                 if name != 'resp':
@@ -1095,6 +1035,14 @@ class DAMD(nn.Module):
         hidden_states['user'] = user_enc
         hidden_states['usdx'] = usdx_enc
         hidden_states['resp'] = resp_enc
+
+        true_resp_enc, true_resp_enc_last_h = self.usdx_encoder(inputs['resp'])
+
+        if cfg.token_weight == -1:
+            self.token_weight = self.teacher(true_resp_enc, usdx_enc)
+        else:
+            self.token_weight = inputs['token_weight']
+
 
         probs = {}
 
@@ -1132,6 +1080,7 @@ class DAMD(nn.Module):
                     _, ps = train_decode('aspn', usdx_enc_last_h, hidden_states, None, bidx=bidx_batch)
                     probs['aspn_aug'].append(ps)
 
+
         return probs
 
 
@@ -1143,7 +1092,14 @@ class DAMD(nn.Module):
         hs['usdx'] = usdx_enc
         hs['resp'] = resp_enc
 
+        true_resp_enc, true_resp_enc_last_h = self.usdx_encoder(inputs['resp'])
+        if cfg.token_weight == -1:
+            self.token_weight = self.teacher(true_resp_enc, usdx_enc)
+        else:
+            self.token_weight = inputs['token_weight']
+
         decoded = {}
+            decoded['token_weight'] = self.token_weight
 
         if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
             bspn_enc, _ = self.span_encoder(inputs['pv_bspn'])
@@ -1208,7 +1164,6 @@ class DAMD(nn.Module):
         for p in self.parameters():
             p.requires_grad=False
         self.act_selection = ActSelectionModel(cfg.hidden_size, cfg.max_span_length, cfg.nbest)
-
 
     def RL_forward(self, inputs, decoded, hiddens_batch, decoded_batch):
         """[summary]

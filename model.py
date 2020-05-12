@@ -9,6 +9,7 @@ from config import global_config as cfg
 from reader import MultiWozReader
 from damd_net import DAMD, cuda_, get_one_hot_input
 from eval import MultiWozEvaluator
+from teacher import TeacherModel
 
 from collections import defaultdict
 
@@ -25,10 +26,15 @@ class Model(object):
             m = DAMD(self.reader)
             self.m=torch.nn.DataParallel(m, device_ids=cfg.cuda_device)
             # print(self.m.module)
+
         self.evaluator = MultiWozEvaluator(self.reader) # evaluator class
         if cfg.cuda: self.m = self.m.cuda()  #cfg.cuda_device[0]
         self.optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=5e-5)
         self.base_epoch = -1
+
+        # self.t = TeacherModel()
+        # if cfg.cuda: self.t = self.t.cuda()  #cfg.cuda_device[0]
+        # self.m.teacher = self.t
 
         if cfg.limit_bspn_vocab:
             self.reader.bspn_masks_tensor = {}
@@ -77,7 +83,7 @@ class Model(object):
             inputs['aspn_aug'] = cuda_(torch.from_numpy(inputs['aspn_aug_unk_np']).long())
             inputs['aspn_aug_4loss'] = inputs['aspn_aug']
 
-        if cfg.token_weight:
+        if 'token_weight' in inputs:
             inputs['token_weight'] = cuda_(torch.tensor(inputs['token_weight']))
         return inputs
 
@@ -458,6 +464,8 @@ class Model(object):
         weight_decay_count = cfg.weight_decay_count
         train_time = 0
         sw = time.time()
+        # valid_loss = self.validate_maml()
+        # pdb.set_trace()
 
         for epoch in range(cfg.epoch_num):
             if epoch <= self.base_epoch:
@@ -495,7 +503,8 @@ class Model(object):
                         self.m.load_state_dict(init_state)
                         optim.zero_grad()
 
-
+                        # print(turn_batch['turn_num'])
+                        # pdb.set_trace()
                         first_turn = (turn_num==0)
                         inputs = self.reader.convert_batch(turn_batch, py_prev[dom], first_turn=first_turn)
                         inputs = self.add_torch_input(inputs, first_turn=first_turn)
@@ -512,7 +521,10 @@ class Model(object):
                         total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
 
                         total_loss = total_loss.mean()
+                        # pdb.set_trace()
                         total_loss.backward()
+                        # pdb.set_trace()
+
                         grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
                         optim.step()
 
@@ -544,6 +556,7 @@ class Model(object):
             valid_loss = self.validate_maml()
             logging.info('epoch: %d, train loss: %.3f, valid loss: %.3f, total time: %.1fmin' % (epoch+1, epoch_sup_loss,
                     valid_loss, (time.time()-sw)/60))
+            # pdb.set_trace()
             if valid_loss <= prev_min_loss:
                 early_stop_count = cfg.early_stop_count
                 weight_decay_count = cfg.weight_decay_count
@@ -567,6 +580,7 @@ class Model(object):
         data_iterator = self.reader.mini_batch_iterator_maml_supervised('dev')
         result_collection = {}
         optim = self.optim
+        teacher_optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.teacher.parameters()),weight_decay=5e-5)
         init_state = copy.deepcopy(self.m.state_dict())
 
         for dial_batch in data_iterator:
@@ -576,7 +590,6 @@ class Model(object):
             for turn_num, turn_batch in enumerate(dial_batch):
 
                 self.m.load_state_dict(init_state)
-
                 first_turn = (turn_num==0)
                 inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn)
                 inputs = self.add_torch_input(inputs, first_turn=first_turn)
@@ -589,6 +602,9 @@ class Model(object):
 
                 if cfg.valid_loss not in ['score', 'match', 'success', 'bleu']:
                     total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
+                    # total_loss.backward()
+                    # teacher_optim.step()
+
                     py_prev['pv_resp'] = turn_batch['resp']
                     if cfg.enable_bspn:
                         py_prev['pv_bspn'] = turn_batch['bspn']
@@ -635,6 +651,8 @@ class Model(object):
             score = 0.5 * (success + match) + bleu
             valid_loss = 130 - score
             logging.info('validation [CTR] match: %2.1f  success: %2.1f  bleu: %2.1f'%(match, success, bleu))
+        
+            # pdb.set_trace()
         return valid_loss
     
     def eval_maml(self, data='test'):
@@ -790,24 +808,16 @@ def main():
     parse_arg_cfg(args)
     cfg.source_domain = cfg.domains[:]
     cfg.source_domain.remove(cfg.target_domain)
-    # if cfg.token_weight == True:
-    #     cfg.train_data_file = ['data_in_domain_' + domain + '_rewrite.json' for domain in cfg.source_domain]
-    #     cfg.adapt_data_file = 'minor_data_in_domain_' + cfg.target_domain + '_rewrite.json'
-    #     cfg.test_data_file = 'data_in_domain_' + cfg.target_domain + '_rewrite.json'
-    # else:
-    #     cfg.train_data_file = ['data_in_domain_' + domain + '.json' for domain in cfg.source_domain]
-    #     cfg.adapt_data_file = 'minor_data_in_domain_' + cfg.target_domain + '.json'
-    #     cfg.test_data_file = 'data_in_domain_' + cfg.target_domain + '.json'
-
     cfg.train_data_file = ['data_in_domain_' + domain + '_rewrite.json' for domain in cfg.source_domain]
     cfg.adapt_data_file = 'minor_data_in_domain_' + cfg.target_domain + '_rewrite.json'
     cfg.test_data_file = 'data_in_domain_' + cfg.target_domain + '_rewrite.json'
 
 
     if not os.path.exists(cfg.exp_path):
-        cfg.exp_path = 'experiments/Trans{}_w{}_{}_sd{}_lr{}_mlr{}_bs{}_vs{}k/'.format(
-                         cfg.transformer, cfg.token_weight, cfg.target_domain, cfg.seed, 
-                         cfg.lr, cfg.meta_lr, cfg.batch_size, int(cfg.vocab_size/1000))
+        cfg.exp_path = 'experiments/te{}_td{}_w{}_{}_sd{}_lr{}_mlr{}_bs{}_vs{}k_{}/'.format(
+                         cfg.transformer_enc, cfg.transformer_dec, cfg.token_weight, cfg.target_domain, 
+                         cfg.seed, cfg.lr, cfg.meta_lr, cfg.batch_size, int(cfg.vocab_size/1000), 
+                         cfg.add_to_fold_name)
         if cfg.save_log and not os.path.exists(cfg.exp_path):
             os.mkdir(cfg.exp_path)
 
@@ -837,7 +847,6 @@ def main():
             cfg.multi_gpu = False
             torch.cuda.set_device(cfg.cuda_device[0])
         else:
-            # cfg.batch_size *= len(cfg.cuda_device)
             cfg.multi_gpu = True
             torch.cuda.set_device(cfg.cuda_device[0])
         logging.info('Device: {}'.format(torch.cuda.current_device()))
@@ -850,22 +859,6 @@ def main():
     m = Model()
     cfg.model_parameters = m.count_params()
     logging.info(str(cfg))
-    # logging.info('mode: {}'.format(cfg.mode))
-    # logging.info('seed: {}'.format(cfg.seed))
-    # logging.info('log time: {}'.format(cfg.log_time))
-    # logging.info('model path: {}'.format(cfg.model_path))
-    # logging.info('adapt path: {}'.format(cfg.adapt_model_path))
-    # logging.info('model parameters: {}'.format(cfg.model_parameters))
-
-    # logging.info('learning rate: {}'.format(cfg.lr))
-    # logging.info('meta learning rate: {}'.format(cfg.meta_lr))
-    # logging.info('token weight: {}'.format(cfg.token_weight))
-    # logging.info('batch size: {}'.format(cfg.batch_size))
-    # logging.info('vocab size: {}'.format(cfg.vocab_size))
-
-    # logging.info('enable aspn: {}'.format(cfg.enable_aspn))
-    # logging.info('bspn mode: {}'.format(cfg.bspn_mode))
-    # logging.info('enable dspn: {}'.format(cfg.enable_dspn))
 
     if args.mode == 'train_maml':
         if cfg.save_log:

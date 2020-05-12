@@ -74,12 +74,10 @@ class _Config:
         self.split = [9,1,0]
 
         # experiment settings
-        self.token_weight = 0
-        self.transformer = 1
         self.degree_size = 5
         self.mode = 'unknown'
         self.cuda = True
-        self.cuda_device = [4]
+        self.cuda_device = [5]
         self.exp_no = 'no_aug'
         self.seed = 333
         self.exp_domains = ['all']
@@ -89,13 +87,12 @@ class _Config:
         self.max_span_length = 30
         self.truncated = False
 
+
         # model settings
         self.vocab_size = 3000
         self.embed_size = 50
         self.hidden_size = 100
         self.pointer_dim = 6 # fixed
-        self.enc_layer_num = 1
-        self.dec_layer_num = 1
         self.dropout = 0
         self.layer_norm = False
         self.skip_connect = False
@@ -149,6 +146,28 @@ class _Config:
         self.topk_num = 1
         self.nucleur_p = 0.
         self.record_mode = False
+
+
+
+        #### mostly cared
+
+
+        #### newly added
+        self.token_weight = 0
+        self.transformer_enc = 0
+        self.transformer_dec = 0
+
+        self.enc_layer_num = 1
+        self.dec_layer_num = 1
+        self.trans_enc_layer_num = 3
+        self.trans_enc_head_num = 5
+        self.trans_dec_layer_num = 3
+        self.trans_dec_head_num = 4
+
+        self.temp_var = False
+
+        self.notes = ''
+        self.add_to_fold_name = ''
 
     def __str__(self):
         s = ''

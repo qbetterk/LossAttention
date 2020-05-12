@@ -540,7 +540,7 @@ class MultiWozReader(_ReaderBase):
             enc['pointer'] = [int(i) for i in t['pointer'].split(',')]
             enc['turn_domain'] = t['turn_domain'].split()
             enc['turn_num'] = t['turn_num']
-            if cfg.token_weight:
+            if cfg.token_weight > 0 :
                 if 'mixed_probs_resp_' + str(cfg.token_weight) not in t:
                     pdb.set_trace()
                 enc['token_weight'] = t['mixed_probs_resp_' + str(cfg.token_weight)]
@@ -725,7 +725,7 @@ class MultiWozReader(_ReaderBase):
         inputs['db_np'] = np.array(py_batch['pointer'])
         inputs['turn_domain'] = py_batch['turn_domain']
 
-        if cfg.token_weight:
+        if 'token_weight' in py_batch:
             # # # padding weight
             inputs['token_weight'] = deepcopy(py_batch['token_weight'])
             # pdb.set_trace()
@@ -761,9 +761,12 @@ class MultiWozReader(_ReaderBase):
 
         for dial_id, turns in result_dict.items():
             entry = {'dial_id': dial_id, 'turn_num': len(turns)}
+
             for prop in field[2:]:
                 entry[prop] = ''
             results.append(entry)
+
+            # pdb.set_trace()
             for turn_no, turn in enumerate(turns):
                 entry = {'dial_id': dial_id}
                 for key in field:
