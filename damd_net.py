@@ -905,9 +905,10 @@ class DAMD(nn.Module):
                                                                        Wgen = Wgen, dropout = self.dropout)
         self.decoders['resp'] = self.resp_decoder
 
-
-        self.teacher = TeacherModel()
+        if cfg.token_weight == -1:
+            self.teacher = TeacherModel()
         self.token_weight = None
+        
         self.nllloss = nn.NLLLoss(ignore_index=0)
         self.nonreduc_loss = nn.NLLLoss(ignore_index=0, reduction='none')
 
@@ -1040,7 +1041,7 @@ class DAMD(nn.Module):
 
         if cfg.token_weight == -1:
             self.token_weight = self.teacher(true_resp_enc, usdx_enc)
-        else:
+        elif cfg.token_weight > 0:
             self.token_weight = inputs['token_weight']
 
 
@@ -1095,10 +1096,12 @@ class DAMD(nn.Module):
         true_resp_enc, true_resp_enc_last_h = self.usdx_encoder(inputs['resp'])
         if cfg.token_weight == -1:
             self.token_weight = self.teacher(true_resp_enc, usdx_enc)
-        else:
+        elif cfg.token_weight > 0:
             self.token_weight = inputs['token_weight']
 
         decoded = {}
+
+        if cfg.token_weight:
             decoded['token_weight'] = self.token_weight
 
         if cfg.enable_dst and cfg.bspn_mode == 'bsdx':

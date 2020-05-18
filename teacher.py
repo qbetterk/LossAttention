@@ -26,10 +26,10 @@ class TeacherModel(nn.Module):
         input_size = self.hidden_size
 
         decoder_layer = nn.TransformerEncoderLayer(d_model=input_size, 
-                                                   nhead=2,
+                                                   nhead=cfg.t_head_num,
                                                    dim_feedforward=self.hidden_size,
                                                    dropout=cfg.dropout)
-        self.trans = nn.TransformerEncoder(decoder_layer, num_layers=1)
+        self.trans = nn.TransformerEncoder(decoder_layer, num_layers=cfg.t_layer_num)
 
         self.linear = nn.Linear(input_size, 1)
 

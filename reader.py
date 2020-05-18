@@ -759,6 +759,9 @@ class MultiWozReader(_ReaderBase):
         if self.multi_acts_record is not None:
             field.insert(7, 'multi_act_gen')
 
+        if cfg.token_weight == -1:
+            field.append('token_weight')
+
         for dial_id, turns in result_dict.items():
             entry = {'dial_id': dial_id, 'turn_num': len(turns)}
 

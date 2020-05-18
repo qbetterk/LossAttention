@@ -27,9 +27,16 @@ class Model(object):
             self.m=torch.nn.DataParallel(m, device_ids=cfg.cuda_device)
             # print(self.m.module)
 
+        # self.t = TeacherModel()
+        # if cfg.cuda: self.t = self.t.cuda()
+
         self.evaluator = MultiWozEvaluator(self.reader) # evaluator class
         if cfg.cuda: self.m = self.m.cuda()  #cfg.cuda_device[0]
         self.optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=5e-5)
+        self.meta_optim = Adam(lr = cfg.meta_lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=1e-5)
+        # self.teacher_optim = Adam(lr = cfg.lr, params=filter(lambda x: x.requires_grad, self.t.parameters()),weight_decay=1e-5)
+        # pdb.set_trace()
+
         self.base_epoch = -1
 
         # self.t = TeacherModel()
@@ -289,7 +296,7 @@ class Model(object):
                         logging.info('aspn-aug:{:.3f}'.format(float(losses['aspn_aug'])))
 
             epoch_sup_loss = sup_loss / (sup_cnt + 1e-8)
-            logging.info('epoch: %d, train loss: %.3f, total time: %.1fmin' % (epoch+1, epoch_sup_loss, (time.time()-sw)/60))
+            logging.info('epoch: %d, train loss: %.4f, total time: %.1fmin' % (epoch+1, epoch_sup_loss, (time.time()-sw)/60))
 
             if epoch_sup_loss <= prev_min_loss:
                 early_stop_count = cfg.early_stop_count
@@ -405,6 +412,9 @@ class Model(object):
                 turn_batch['aspn_gen'] = decoded['aspn'] if cfg.enable_aspn else [[0]] * len(decoded['resp'])
                 turn_batch['dspn_gen'] = decoded['dspn'] if cfg.enable_dspn else [[0]] * len(decoded['resp'])
 
+                if cfg.token_weight == -1:
+                    turn_batch['token_weight'] = decoded['token_weight']
+
                 if self.reader.multi_acts_record is not None:
                     turn_batch['multi_act_gen'] = self.reader.multi_acts_record
                 if cfg.record_mode:
@@ -436,6 +446,7 @@ class Model(object):
             self.reader.record_utterance(result_collection)
             quit()
         results, field = self.reader.wrap_result(result_collection)
+        pdb.set_trace()
         self.reader.save_result('w', results, field)
 
         metric_results = self.evaluator.run_metrics(results)
@@ -473,11 +484,11 @@ class Model(object):
             sup_loss = 0
             sup_cnt = 0
             optim = self.optim
-            # data_iterator generatation size: (batch num, turn num, batch size)
+            meta_optim = self.meta_optim
+            # teacher_optim = self.teacher_optim
+
             btm = time.time()
 
-            # optim = Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=1e-5)
-            meta_optim = Adam(lr = mlr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=1e-5)
 
             dial_batches_domain = self.reader.mini_batch_iterator_maml_supervised('train')
 
@@ -493,6 +504,7 @@ class Model(object):
                     loss_doms = []
                     losses_doms = []
                     init_state = copy.deepcopy(self.m.state_dict())
+                    # pdb.set_trace()
 
                     for dom in turn_batch_domain:
                     # for k-th task:
@@ -526,6 +538,7 @@ class Model(object):
                         # pdb.set_trace()
 
                         grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
+                        # pdb.set_trace()
                         optim.step()
 
                         total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
@@ -535,10 +548,17 @@ class Model(object):
                         losses_doms.append(losses)
 
                     self.m.load_state_dict(init_state)
+                    # teacher_model_state = {k:v for k,v in init_state.items() if 'teacher' in k}
+
+                    # pdb.set_trace()
                     meta_optim.zero_grad()
                     loss_meta = torch.stack(loss_doms).sum(0) / self.domain_num
                     loss_meta.backward()
                     grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
+
+                    if cfg.maxmin:
+                        for param in self.m.teacher.parameters():
+                            param.grad *= -1
                     meta_optim.step()
 
                     losses_meta = defaultdict(float)
@@ -572,6 +592,9 @@ class Model(object):
                     lr *= cfg.lr_decay
                     self.optim = Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),
                                   weight_decay=5e-5)
+                    mlr *= cfg.lr_decay
+                    self.meta_optim = Adam(lr=mlr, params=filter(lambda x: x.requires_grad, self.m.parameters()),
+                                  weight_decay=5e-5)
                     weight_decay_count = cfg.weight_decay_count
                     logging.info('learning rate decay, learning rate: %f' % (lr))
 
@@ -580,7 +603,7 @@ class Model(object):
         data_iterator = self.reader.mini_batch_iterator_maml_supervised('dev')
         result_collection = {}
         optim = self.optim
-        teacher_optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.teacher.parameters()),weight_decay=5e-5)
+        # teacher_optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.teacher.parameters()),weight_decay=5e-5)
         init_state = copy.deepcopy(self.m.state_dict())
 
         for dial_batch in data_iterator:
@@ -589,7 +612,7 @@ class Model(object):
             py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
             for turn_num, turn_batch in enumerate(dial_batch):
 
-                self.m.load_state_dict(init_state)
+                
                 first_turn = (turn_num==0)
                 inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn)
                 inputs = self.add_torch_input(inputs, first_turn=first_turn)
@@ -602,8 +625,12 @@ class Model(object):
 
                 if cfg.valid_loss not in ['score', 'match', 'success', 'bleu']:
                     total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
-                    # total_loss.backward()
-                    # teacher_optim.step()
+                    if cfg.token_weight == -1 and cfg.val_update:
+                        total_loss.backward()
+                        if cfg.maxmin:
+                            for param in self.m.teacher.parameters():
+                                param.grad *= -1
+                        optim.step()
 
                     py_prev['pv_resp'] = turn_batch['resp']
                     if cfg.enable_bspn:
@@ -639,6 +666,11 @@ class Model(object):
                         py_prev['pv_dspn'] = turn_batch['dspn'] if cfg.use_true_prev_dspn else decoded['dspn']
                 count += 1
                 torch.cuda.empty_cache()
+
+                if cfg.token_weight == -1:
+                    teacher_model_state = {k:v for k,v in self.m.state_dict().items() if 'teacher' in k}
+                    init_state.update(teacher_model_state)
+                self.m.load_state_dict(init_state)
 
             if cfg.valid_loss in ['score', 'match', 'success', 'bleu']:
                 result_collection.update(self.reader.inverse_transpose_batch(dial_batch))
@@ -808,31 +840,51 @@ def main():
     parse_arg_cfg(args)
     cfg.source_domain = cfg.domains[:]
     cfg.source_domain.remove(cfg.target_domain)
-    cfg.train_data_file = ['data_in_domain_' + domain + '_rewrite.json' for domain in cfg.source_domain]
-    cfg.adapt_data_file = 'minor_data_in_domain_' + cfg.target_domain + '_rewrite.json'
-    cfg.test_data_file = 'data_in_domain_' + cfg.target_domain + '_rewrite.json'
+
+
+    cfg.train_data_file = ['data_in_domain_' + domain + '.json' for domain in cfg.source_domain]
+    cfg.adapt_data_file = 'adapt_data_in_domain_' + cfg.target_domain + '.json'
+    cfg.test_data_file = 'test_data_in_domain_' + cfg.target_domain + '.json'
+
+    # cfg.train_data_file = ['data_in_domain_' + domain + '_rewrite.json' for domain in cfg.source_domain]
+    # cfg.adapt_data_file = 'adapt_data_in_domain_' + cfg.target_domain + '_rewrite.json'
+    # cfg.test_data_file = 'test_data_in_domain_' + cfg.target_domain + '_rewrite.json'
 
 
     if not os.path.exists(cfg.exp_path):
-        cfg.exp_path = 'experiments/te{}_td{}_w{}_{}_sd{}_lr{}_mlr{}_bs{}_vs{}k_{}/'.format(
-                         cfg.transformer_enc, cfg.transformer_dec, cfg.token_weight, cfg.target_domain, 
+        cfg.exp_path = 'experiments/w{}_{}_sd{}_lr{}_mlr{}_bs{}_vs{}k_{}/'.format(
+                         cfg.token_weight, cfg.target_domain, 
                          cfg.seed, cfg.lr, cfg.meta_lr, cfg.batch_size, int(cfg.vocab_size/1000), 
                          cfg.add_to_fold_name)
         if cfg.save_log and not os.path.exists(cfg.exp_path):
             os.mkdir(cfg.exp_path)
 
-    if args.mode == 'test' or args.mode=='adjust':
+    if args.mode == 'test' or args.mode=='adapt_test':
         if not os.path.exists(cfg.eval_load_path):
             cfg.eval_load_path = cfg.exp_path
+
+        cfg.model_path = os.path.join(cfg.eval_load_path, 'model.pkl')
+        cfg.test_dir = os.path.join(cfg.eval_load_path, 
+                                    'test_' + cfg.data_path.split('/')[-2])
+
+        if not os.path.exists(cfg.test_dir):
+            os.mkdir(cfg.test_dir)
+
+        cfg.adapt_model_path = os.path.join(cfg.test_dir, 'model_adapt.pkl')
+        cfg.result_path = os.path.join(cfg.test_dir, 'result.csv')
+        cfg.vocab_path_eval = os.path.join(cfg.eval_load_path, 'vocab')
+        # cfg.adapt_model_path = cfg.model_path.split('.pkl')[0] + '_adapt.pkl'
+        # cfg.result_path = os.path.join(cfg.eval_load_path, 'result.csv')
+        # cfg.vocab_path_eval = os.path.join(cfg.eval_load_path, 'vocab')
+
+
         cfg_load = json.loads(open(os.path.join(cfg.eval_load_path, 'config.json'), 'r').read())
         for k, v in cfg_load.items():
             if k in dir(cfg):
                 continue
             setattr(cfg, k, v)
-        cfg.model_path = os.path.join(cfg.eval_load_path, 'model.pkl')
-        cfg.adapt_model_path = cfg.model_path.split('.pkl')[0] + '_adapt.pkl'
-        cfg.result_path = os.path.join(cfg.eval_load_path, 'result.csv')
-        cfg.vocab_path_eval = os.path.join(cfg.eval_load_path, 'vocab')
+
+        cfg._init_logging_handler(log_dir = cfg.test_dir)
     else:
 
         cfg.model_path = os.path.join(cfg.exp_path, 'model.pkl')
@@ -840,8 +892,8 @@ def main():
         cfg.result_path = os.path.join(cfg.exp_path, 'result.csv')
         cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
         cfg.eval_load_path = cfg.exp_path
+        cfg._init_logging_handler(log_dir = cfg.exp_path)
 
-    cfg._init_logging_handler(log_dir = cfg.exp_path)
     if cfg.cuda:
         if len(cfg.cuda_device)==1:
             cfg.multi_gpu = False

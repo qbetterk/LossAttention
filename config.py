@@ -29,7 +29,7 @@ class _Config:
 
         self.vocab_path_train = './data/multi-woz-processed/vocab'
         self.vocab_path_eval = None
-        self.data_path = './data/multi-woz-processed/'
+        self.data_path = './data/multi-woz-processed/adapt_9/'
 
         self.domains = [
                         'attraction',
@@ -50,8 +50,8 @@ class _Config:
                                 ]
         self.target_domain = 'restaurant'
         self.train_data_file = ['data_in_domain_' + domain + '.json' for domain in self.source_domain]
-        self.adapt_data_file = 'minor_data_in_domain_' + self.target_domain + '.json'
-        self.test_data_file = 'data_in_domain_' + self.target_domain + '.json'
+        self.adapt_data_file = 'adapt_data_in_domain_' + self.target_domain + '.json'
+        self.test_data_file = 'test_data_in_domain_' + self.target_domain + '.json'
 
         self.dev_list = 'data/multi-woz/valListFile.json'
         self.test_list = 'data/multi-woz/testListFile.json'
@@ -77,7 +77,7 @@ class _Config:
         self.degree_size = 5
         self.mode = 'unknown'
         self.cuda = True
-        self.cuda_device = [5]
+        self.cuda_device = [4]
         self.exp_no = 'no_aug'
         self.seed = 333
         self.exp_domains = ['all']
@@ -89,6 +89,8 @@ class _Config:
 
 
         # model settings
+        self.enc_layer_num = 1
+        self.dec_layer_num = 1
         self.vocab_size = 3000
         self.embed_size = 50
         self.hidden_size = 100
@@ -154,20 +156,31 @@ class _Config:
 
         #### newly added
         self.token_weight = 0
-        self.transformer_enc = 0
-        self.transformer_dec = 0
 
-        self.enc_layer_num = 1
-        self.dec_layer_num = 1
-        self.trans_enc_layer_num = 3
+        self.trans_enc_layer_num = 2
         self.trans_enc_head_num = 5
         self.trans_dec_layer_num = 3
         self.trans_dec_head_num = 4
 
+        self.transformer_enc = 0
+        self.transformer_dec = 0
+
         self.temp_var = False
+
+        # # teacher model parameters
+        self.t_layer_num = 1
+        self.t_head_num = 2
+
+        # # maximize teacher model's loss
+        self.maxmin = False
+
+        # # update model during validations
+        self.val_update = True
 
         self.notes = ''
         self.add_to_fold_name = ''
+
+        self.test_dir = ''
 
     def __str__(self):
         s = ''

@@ -6,7 +6,9 @@ import pdb
 from tqdm import tqdm
 
 source_data_dir = '../token_reweight/data/multi-woz-processed/'
-target_data_dir = './data/multi-woz-processed/'
+# target_data_dir = './data/multi-woz-processed/adapt_50/'
+target_data_dir = './data/multi-woz-processed/adapt_9/'
+# target_data_dir = './data/multi-woz-processed/'
 domains = [
             'attraction',
             'train',
@@ -61,88 +63,122 @@ for domain in tqdm(domains):
         json.dump(domain_dials, rf, indent = 2)
 
 
-
-
-    # # # split data into train and adjust set
-    rewrite_major_file_path = target_data_dir + 'major_data_in_domain_' + domain + '_rewrite.json'
-    minor_data_path         = target_data_dir + 'minor_data_in_domain_' + domain + '.json'
-    rewrite_minor_data_path = target_data_dir + 'minor_data_in_domain_' + domain + '_rewrite.json'
+    # # # split data into adapt and test set
+    adapt_data_path         = target_data_dir + 'adapt_data_in_domain_' + domain + '.json'
+    rewrite_adapt_data_path = target_data_dir + 'adapt_data_in_domain_' + domain + '_rewrite.json'
+    test_data_path          = target_data_dir + 'test_data_in_domain_'  + domain + '.json'
+    rewrite_test_data_path  = target_data_dir + 'test_data_in_domain_'  + domain + '_rewrite.json'
+    # rest_data_path          = target_data_dir + 'rest_data_in_domain_'  + domain + '.json'
+    # rewrite_rest_data_path  = target_data_dir + 'rest_data_in_domain_'  + domain + '_rewrite.json'
 
     with open(target_rewrite_file_path) as rf:
         domain_dials = json.loads(rf.read().lower())
-    with open(minor_data_path) as md :
-        minor_data = json.loads(md.read().lower())
+    with open(adapt_data_path) as ad :
+        adapt_data = json.loads(ad.read().lower())
+    with open(test_data_path) as td :
+        test_data = json.loads(td.read().lower())
+    # with open(rest_data_path) as rd :
+    #     rest_data = json.loads(rd.read().lower())
 
 
-    # # # split out adapt data(minor)
-    rewrite_minor_data = {}
-    for dial_id in minor_data:
-        rewrite_minor_data[dial_id] = domain_dials[dial_id]
+    # # # split out adapt data
+    rewrite_adapt_data = {}
+    for dial_id in adapt_data:
+        rewrite_adapt_data[dial_id] = domain_dials[dial_id]
 
-    with open(rewrite_minor_data_path, 'w+') as rmd:
-        json.dump(rewrite_minor_data, rmd, indent = 2)
+    with open(rewrite_adapt_data_path, 'w+') as rad:
+        json.dump(rewrite_adapt_data, rad, indent = 2)
 
-    # # # shrink train data
-    for dial_id in minor_data:
-        del domain_dials[dial_id]
+    # # # split out test data
+    rewrite_test_data = {}
+    for dial_id in test_data:
+        rewrite_test_data[dial_id] = domain_dials[dial_id]
 
-    with open(rewrite_major_file_path, 'w+') as rf:
-        json.dump(domain_dials, rf, indent = 2)
+    with open(rewrite_test_data_path, 'w+') as rtd:
+        json.dump(rewrite_test_data, rtd, indent = 2)
 
+    # # # # split out rest data
+    # rewrite_rest_data = {}
+    # for dial_id in rest_data:
+    #     rewrite_rest_data[dial_id] = domain_dials[dial_id]
 
+    # with open(rewrite_rest_data_path, 'w+') as rrd:
+    #     json.dump(rewrite_rest_data, rrd, indent = 2)
 
-# # # generate the shrink data for compare scores
-data_dir = './data/multi-woz-processed/'
-compare_dir = './data/multi-woz-processed/compare/'
-domains = [
-            'attraction',
-            'train',
-            'taxi',
-            'restaurant',
-            'hospital',
-            'hotel',
-            'police'
-            ]
+    # # # # shrink train data
+    # for dial_id in minor_data:
+    #     del domain_dials[dial_id]
 
-for domain in ['restaurant']:#tqdm(domains):
-    rewrite_file_path = data_dir + 'data_in_domain_' + domain + '_rewrite.json'
-    compare_rewrite_file_path = compare_dir + 'data_in_domain_' + domain + '_rewrite_compare.json'
-
-    with open(rewrite_file_path) as rf:
-        domain_dials = json.loads(rf.read().lower())
+    # rewrite_major_file_path = target_data_dir + 'major_data_in_domain_' + domain + '_rewrite.json'
+    # with open(rewrite_major_file_path, 'w+') as rf:
+    #     json.dump(domain_dials, rf, indent = 2)
 
 
-    shrink_dials = {}
-    for dial_id in domain_dials:
-        shrink_dials[dial_id] = {'log':[]}
-        for turn_num in range(len(domain_dials[dial_id]['log'])):
-            shrink_dials[dial_id]['log'].append({})
 
-            shrink_dials[dial_id]['log'][turn_num]['user'] = domain_dials[dial_id]['log'][turn_num]['user']
-            shrink_dials[dial_id]['log'][turn_num]['user_delex'] = domain_dials[dial_id]['log'][turn_num]['user_delex']
-            # shrink_dials[dial_id]['log'][turn_num]['sys_act'] = domain_dials[dial_id]['log'][turn_num]['sys_act']
-            shrink_dials[dial_id]['log'][turn_num]['resp'] = domain_dials[dial_id]['log'][turn_num]['resp']
+# # # # generate the shrink data for compare scores
+# data_dir = './data/multi-woz-processed/'
+# compare_dir = './data/multi-woz-processed/compare/'
+# domains = [
+#             'attraction',
+#             'train',
+#             'taxi',
+#             'restaurant',
+#             'hospital',
+#             'hotel',
+#             'police'
+#             ]
+
+# for domain in ['restaurant']:#tqdm(domains):
+#     rewrite_file_path = data_dir + 'data_in_domain_' + domain + '_rewrite.json'
+#     compare_rewrite_file_path = compare_dir + 'data_in_domain_' + domain + '_rewrite_compare.json'
+
+#     with open(rewrite_file_path) as rf:
+#         domain_dials = json.loads(rf.read().lower())
 
 
-            for prob_dom in domains:
-                if prob_dom == domain:
-                    probs_resp_dom = domain_dials[dial_id]['log'][turn_num][prob_dom + '_lm_probs_resp']
-                    shrink_dials[dial_id]['log'][turn_num][prob_dom[:4]] = \
-                        '  '.join(['{:.2f}'.format(prob) for prob in probs_resp_dom])
+#     shrink_dials = {}
+#     for dial_id in domain_dials:
+#         shrink_dials[dial_id] = {'log':[]}
+#         for turn_num in range(len(domain_dials[dial_id]['log'])):
+#             shrink_dials[dial_id]['log'].append({})
 
-            for prob_dom in domains:
-                if prob_dom != domain:
-                    probs_resp_dom = domain_dials[dial_id]['log'][turn_num][prob_dom + '_lm_probs_resp']
-                    shrink_dials[dial_id]['log'][turn_num][prob_dom[:4]] = \
-                        '  '.join(['{:.2f}'.format(prob) for prob in probs_resp_dom])
+#             shrink_dials[dial_id]['log'][turn_num]['user'] = domain_dials[dial_id]['log'][turn_num]['user']
+#             shrink_dials[dial_id]['log'][turn_num]['user_delex'] = domain_dials[dial_id]['log'][turn_num]['user_delex']
+#             # shrink_dials[dial_id]['log'][turn_num]['sys_act'] = domain_dials[dial_id]['log'][turn_num]['sys_act']
+#             shrink_dials[dial_id]['log'][turn_num]['resp'] = domain_dials[dial_id]['log'][turn_num]['resp']
+
+
+#             for prob_dom in domains:
+#                 if prob_dom == domain:
+#                     probs_resp_dom = domain_dials[dial_id]['log'][turn_num][prob_dom + '_lm_probs_resp']
+#                     shrink_dials[dial_id]['log'][turn_num][prob_dom[:4]] = \
+#                         '  '.join(['{:.2f}'.format(prob) for prob in probs_resp_dom])
+
+#             for prob_dom in domains:
+#                 if prob_dom != domain:
+#                     probs_resp_dom = domain_dials[dial_id]['log'][turn_num][prob_dom + '_lm_probs_resp']
+#                     shrink_dials[dial_id]['log'][turn_num][prob_dom[:4]] = \
+#                         '  '.join(['{:.2f}'.format(prob) for prob in probs_resp_dom])
             
-            shrink_dials[dial_id]['log'][turn_num]['----'] = '  '
+#             shrink_dials[dial_id]['log'][turn_num]['----'] = '  '
 
-            for i in range(10):
-                if 'mixed_probs_resp_'+str(i) in domain_dials[dial_id]['log'][turn_num]:
-                    mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_'+str(i)]
-                    shrink_dials[dial_id]['log'][turn_num]['mix'+str(i)] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
+#             for i in range(10):
+#                 if 'mixed_probs_resp_'+str(i) in domain_dials[dial_id]['log'][turn_num]:
+#                     mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_'+str(i)]
+#                     shrink_dials[dial_id]['log'][turn_num]['mix'+str(i)] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
+
+#             # mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_2']
+#             # shrink_dials[dial_id]['log'][turn_num]['mix2'] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
+
+#             # mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_3']
+#             # shrink_dials[dial_id]['log'][turn_num]['mix3'] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
+
+#             # mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_4']
+#             # shrink_dials[dial_id]['log'][turn_num]['mix4'] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
+
+#             # mixed_probs_resp = domain_dials[dial_id]['log'][turn_num]['mixed_probs_resp_5']
+#             # shrink_dials[dial_id]['log'][turn_num]['mix5'] = '  '.join(['{:.2f}'.format(prob) for prob in mixed_probs_resp])
 
 
-    with open(compare_rewrite_file_path, 'w+') as crf:
-        json.dump(shrink_dials, crf, indent = 2)
+#     with open(compare_rewrite_file_path, 'w+') as crf:
+#         json.dump(shrink_dials, crf, indent = 2)
