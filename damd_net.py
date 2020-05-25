@@ -965,7 +965,8 @@ class DAMD(nn.Module):
 
                     # pdb.set_trace()
 
-                    if cfg.reg_w :
+
+                    if cfg.reg_w and cfg.mode == 'train':
                         if cfg.minus_reg:
                             loss = (torch.dot(nonred_loss, token_weights) - torch.norm(token_weights, p=2)) / nonred_loss.shape[0]
                         else:

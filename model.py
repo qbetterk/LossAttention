@@ -292,8 +292,9 @@ class Model(object):
 
                     # # # not update teacher param during adaptation
                     # if cfg.temp_var:
-                    for param in self.m.teacher.parameters():
-                        param.grad *= 0
+                    if cfg.token_weight == -1:
+                        for param in self.m.teacher.parameters():
+                            param.grad *= 0
 
                     optim.step()
                     sup_loss += float(total_loss)
@@ -762,20 +763,20 @@ class Model(object):
         self.reader.save_result('w', results, field)
         # pdb.set_trace()
 
+        if cfg.token_weight == -1:
+            result_weight = []
+            field_weight = ['dial_id', 'turn_num','resp']
+            for turn in results:
+                result_weight.append({i:turn[i] for i in field_weight})
+                result_weight[-1]['r_gen'] = turn['resp_gen']
 
-        result_weight = []
-        field_weight = ['dial_id', 'turn_num','resp']
-        for turn in results:
-            result_weight.append({i:turn[i] for i in field_weight})
-            result_weight[-1]['r_gen'] = turn['resp_gen']
-
-            if type(turn['token_weight']) != str:
-                weights = turn['token_weight'][turn['token_weight'].nonzero().squeeze()].tolist()
-                result_weight[-1]['token_weight'] = '  '.join(['{:.3f}'.format(weight) for weight in weights])
-                
-        # result_weight = [{i:y[i] for i in field_weight} for y in results]
-        with open('.'.join(cfg.result_path.split('.')[:-1])+'_weight.json', 'w') as rf:
-            json.dump(result_weight, rf, indent=4)
+                if type(turn['token_weight']) != str:
+                    weights = turn['token_weight'][turn['token_weight'].nonzero().squeeze()].tolist()
+                    result_weight[-1]['token_weight'] = '  '.join(['{:.3f}'.format(weight) for weight in weights])
+                    
+            # result_weight = [{i:y[i] for i in field_weight} for y in results]
+            with open('.'.join(cfg.result_path.split('.')[:-1])+'_weight.json', 'w') as rf:
+                json.dump(result_weight, rf, indent=4)
 
 
 
