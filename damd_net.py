@@ -54,6 +54,7 @@ def get_one_hot_input(x_input_np):
         n_dims = n_dims if n_dims is not None else int(torch.max(y_tensor)) + 1
         if torch.max(y_tensor) > n_dims:
             pdb.set_trace()
+            y_tensor[y_tensor > n_dims] = 2
         y_one_hot = torch.zeros(y_tensor.size()[0], n_dims).fill_(0.).scatter_(1, y_tensor, 1)   #1e-10
         # y_one_hot = torch.zeros(y_tensor.size()[0], n_dims).fill_(0.)   #1e-10
         # y_one_hot = y_one_hot.scatter_(1, y_tensor, 1)
@@ -855,7 +856,6 @@ class DAMD(nn.Module):
         self.beam_width = cfg.beam_width
         self.nbest = cfg.nbest
 
-        self.token_weight = None
 
         # self.module_list = nn.ModuleList()
 
@@ -908,7 +908,7 @@ class DAMD(nn.Module):
         if cfg.token_weight == -1:
             self.teacher = TeacherModel()
         self.token_weight = None
-        
+
         self.nllloss = nn.NLLLoss(ignore_index=0)
         self.nonreduc_loss = nn.NLLLoss(ignore_index=0, reduction='none')
 
@@ -959,11 +959,21 @@ class DAMD(nn.Module):
                     nonred_loss = self.nonreduc_loss(pred, label)
 
                     token_weights = self.token_weight.view(-1)
-
+                    # pdb.set_trace()
                     if nonred_loss.shape != token_weights.shape:
                         pdb.set_trace()
 
-                    loss = torch.dot(nonred_loss, token_weights) / nonred_loss.shape[0]
+                    # pdb.set_trace()
+
+                    if cfg.reg_w :
+                        if cfg.minus_reg:
+                            loss = (torch.dot(nonred_loss, token_weights) - torch.norm(token_weights, p=2)) / nonred_loss.shape[0]
+                        else:
+                            loss = (torch.dot(nonred_loss, token_weights) + torch.norm(token_weights, p=2)) / nonred_loss.shape[0]
+                        # pdb.set_trace()
+                    else:
+                        loss = torch.dot(nonred_loss, token_weights) / nonred_loss.shape[0]
+                    
 
                 else:
                     loss = self.nllloss(pred, label)
@@ -1040,7 +1050,7 @@ class DAMD(nn.Module):
         true_resp_enc, true_resp_enc_last_h = self.usdx_encoder(inputs['resp'])
 
         if cfg.token_weight == -1:
-            self.token_weight = self.teacher(true_resp_enc, usdx_enc)
+            self.token_weight = self.teacher(true_resp_enc, usdx_enc, inputs['resp'])
         elif cfg.token_weight > 0:
             self.token_weight = inputs['token_weight']
 
@@ -1095,7 +1105,8 @@ class DAMD(nn.Module):
 
         true_resp_enc, true_resp_enc_last_h = self.usdx_encoder(inputs['resp'])
         if cfg.token_weight == -1:
-            self.token_weight = self.teacher(true_resp_enc, usdx_enc)
+            self.token_weight = self.teacher(true_resp_enc, usdx_enc, inputs['resp'])
+            # pdb.set_trace()
         elif cfg.token_weight > 0:
             self.token_weight = inputs['token_weight']
 
@@ -1459,7 +1470,6 @@ class DAMD(nn.Module):
             hidden_chosen = hiddens_batch[:, 0, :, :]   #[B, nbest, T, H]
             decode_chosen = wid_seqs_np[:, 0, :]
         return hidden_chosen, decode_chosen
-
 
     def RL_train(self, inputs, hs, hiddens_batch, decoded_batch, first_turn):
         """[summary]

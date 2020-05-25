@@ -469,7 +469,13 @@ class MultiWozEvaluator(object):
                     pred_acts = self.reader.aspan_to_act_list(act_str)
                     act_type = ''
                     for act in pred_acts:
-                        d,a,s = act.split('-')
+                        split_act = act.split('-')
+                        if len(split_act) != 3:
+                            if '' in split_act:
+                                split_act.remove('')
+                            else:
+                                pdb.set_trace()
+                        d,a,s = split_act
                         if d + '-' + a not in act_collect:
                             act_collect[d + '-' + a] = {s:1}
                             slot_score += 1

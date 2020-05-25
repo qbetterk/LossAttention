@@ -540,6 +540,8 @@ class MultiWozReader(_ReaderBase):
             enc['pointer'] = [int(i) for i in t['pointer'].split(',')]
             enc['turn_domain'] = t['turn_domain'].split()
             enc['turn_num'] = t['turn_num']
+            enc['resp_len'] = len(enc['resp'])
+            # pdb.set_trace()
             if cfg.token_weight > 0 :
                 if 'mixed_probs_resp_' + str(cfg.token_weight) not in t:
                     pdb.set_trace()
@@ -724,8 +726,9 @@ class MultiWozReader(_ReaderBase):
 
         inputs['db_np'] = np.array(py_batch['pointer'])
         inputs['turn_domain'] = py_batch['turn_domain']
+        inputs['resp_len'] = py_batch['resp_len']
 
-        if 'token_weight' in py_batch:
+        if cfg.token_weight > 0 :
             # # # padding weight
             inputs['token_weight'] = deepcopy(py_batch['token_weight'])
             # pdb.set_trace()
@@ -943,6 +946,127 @@ class MultiWozReader(_ReaderBase):
                     dialog_record[dial_id].append(turn_record)
 
             # json.dump(dialog_record, open(cfg.eval_load_path + '/resultdict.json','w'))
+
+
+class SchemaReader(_ReaderBase):
+    def __init__(self):
+        super().__init__()
+
+        self.nlp = spacy.load('en_core_web_sm')
+        # self.db = MultiWozDB(cfg.dbs)
+        self.vocab_size = self._build_vocab()
+        self.domain_files = json.loads(open(cfg.domain_file_path, 'r').read())
+        self.slot_value_set = json.loads(open(cfg.slot_value_set_path, 'r').read())
+        if cfg.multi_acts_training:
+            self.multi_acts = json.loads(open(cfg.multi_acts_path, 'r').read())
+
+        test_list = [l.strip().lower() for l in open(cfg.test_list, 'r').readlines()]
+        dev_list = [l.strip().lower() for l in open(cfg.dev_list, 'r').readlines()]
+        self.dev_files, self.test_files = {}, {}
+        for fn in test_list:
+            self.test_files[fn.replace('.json', '')] = 1
+        for fn in dev_list:
+            self.dev_files[fn.replace('.json', '')] = 1
+
+        self.exp_files = {}
+        if 'all' not in cfg.exp_domains:
+            for domain in cfg.exp_domains:
+                fn_list = self.domain_files.get(domain)
+                if not fn_list:
+                    raise ValueError('[%s] is an invalid experiment setting'%domain)
+                for fn in fn_list:
+                    self.exp_files[fn.replace('.json', '')] = 1
+
+        self._load_data_maml()
+
+        if cfg.limit_bspn_vocab:
+            self.bspn_masks = self._construct_bspn_constraint()
+        if cfg.limit_aspn_vocab:
+            self.aspn_masks = self._construct_aspn_constraint()
+
+        self.multi_acts_record = None
+
+    def _build_vocab(self):
+        self.vocab = utils.Vocab(cfg.vocab_size)
+        vp = cfg.vocab_path_train if cfg.mode == 'train' or cfg.vocab_path_eval is None else cfg.vocab_path_eval
+        # vp = cfg.vocab_path+'.json.freq.json'
+        self.vocab.load_vocab(vp)
+        return self.vocab.vocab_size
+        
+    def _load_data_maml(self, save_temp=False):
+        self.data = {}
+        for domain in cfg.train_data_file:
+            data_json = open(os.path.join(cfg.data_path + domain), 'r', encoding='utf-8')
+            data_dom = json.loads(data_json.read().lower())
+            data_json.close()
+
+            train_num = len(data_dom) * cfg.split[0] // sum(cfg.split)
+            train_list = random.choices(list(data_dom.keys()), k = train_num)
+            train_data, dev_data = [], []
+            for fn, dial in data_dom.items():
+                if fn in train_list:
+                    train_data.append(self._get_encoded_data(fn, dial))
+                else:
+                    dev_data.append(self._get_encoded_data(fn, dial))
+
+            random.shuffle(train_data)
+            random.shuffle(dev_data)
+
+            self.train.append(train_data)
+            self.dev.append(dev_data)
+
+            self.data.update(data_dom)
+
+        test_data_json = open(os.path.join(cfg.data_path + cfg.test_data_file), 'r', encoding='utf-8')
+        test_data_dom = json.loads(test_data_json.read().lower())
+        test_data_json.close()
+        adapt_data_json = open(os.path.join(cfg.data_path + cfg.adapt_data_file), 'r', encoding='utf-8')
+        adapt_data_dom = json.loads(adapt_data_json.read().lower())
+        adapt_data_json.close()
+
+        self.test = [self._get_encoded_data(fn, dial) for (fn, dial) in test_data_dom.items()]
+        self.adapt = [self._get_encoded_data(fn, dial) for (fn, dial) in adapt_data_dom.items()]
+        if save_temp:
+            json.dump(self.test, open('data/multi-woz-analysis/test.encoded.json','w'), indent = 4)
+            self.vocab.save_vocab('data/multi-woz-analysis/vocab_temp')
+            
+        random.shuffle(self.test)
+        random.shuffle(self.adapt)
+
+        self.data.update(test_data_dom)
+        self.data.update(adapt_data_dom)
+
+
+    def _get_encoded_data(self, fn, dial):
+        encoded_dial = []
+        for idx, t in enumerate(dial['log']):
+            enc = {}
+            enc['dial_id'] = fn
+            enc['user'] = self.vocab.sentence_encode(t['user'].split() + ['<eos_u>'])
+            enc['usdx'] = self.vocab.sentence_encode(t['user_delex'].split() + ['<eos_u>'])
+            enc['resp'] = self.vocab.sentence_encode(t['resp'].split() + ['<eos_r>'])
+            enc['bspn'] = self.vocab.sentence_encode(t['constraint'].split() + ['<eos_b>'])
+            enc['bsdx'] = self.vocab.sentence_encode(t['cons_delex'].split() + ['<eos_b>'])
+            enc['aspn'] = self.vocab.sentence_encode(t['sys_act'].split() + ['<eos_a>'])
+            enc['dspn'] = self.vocab.sentence_encode(t['turn_domain'].split() + ['<eos_d>'])
+            enc['pointer'] = [int(i) for i in t['pointer'].split(',')]
+            enc['turn_domain'] = t['turn_domain'].split()
+            enc['turn_num'] = t['turn_num']
+            if cfg.token_weight > 0 :
+                if 'mixed_probs_resp_' + str(cfg.token_weight) not in t:
+                    pdb.set_trace()
+                enc['token_weight'] = t['mixed_probs_resp_' + str(cfg.token_weight)]
+
+            if cfg.multi_acts_training:
+                enc['aspn_aug'] = []
+                if fn in self.multi_acts:
+                    turn_ma = self.multi_acts[fn].get(str(idx), {})
+                    for act_type, act_spans in turn_ma.items():
+                        enc['aspn_aug'].append([self.vocab.sentence_encode(a.split()+['<eos_a>']) for a in act_spans])
+
+            encoded_dial.append(enc)
+        return encoded_dial
+
 
 
 if __name__=='__main__':

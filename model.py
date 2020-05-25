@@ -6,7 +6,7 @@ from torch.optim import Adam
 
 import utils
 from config import global_config as cfg
-from reader import MultiWozReader
+from reader import MultiWozReader, SchemaReader
 from damd_net import DAMD, cuda_, get_one_hot_input
 from eval import MultiWozEvaluator
 from teacher import TeacherModel
@@ -18,8 +18,19 @@ import copy
 
 
 class Model(object):
-    def __init__(self):
-        self.reader = MultiWozReader()
+    def __init__(self, dataset='multiwoz'):
+
+        reader_dict = {
+            'multiwoz': MultiWozReader,
+            'schema': SchemaReader,
+        }
+        # evaluator_dict = {
+        #     'camrest': CamRestEvaluator,
+        #     'kvret': KvretEvaluator,
+        # }
+
+        self.reader = reader_dict[dataset]()
+        # self.reader = MultiWozReader()
         if len(cfg.cuda_device)==1:
             self.m =DAMD(self.reader)
         else:
@@ -90,7 +101,8 @@ class Model(object):
             inputs['aspn_aug'] = cuda_(torch.from_numpy(inputs['aspn_aug_unk_np']).long())
             inputs['aspn_aug_4loss'] = inputs['aspn_aug']
 
-        if 'token_weight' in inputs:
+            inputs['resp_len'] = cuda_(torch.tensor(inputs['resp_len']))
+        if cfg.token_weight > 0 :
             inputs['token_weight'] = cuda_(torch.tensor(inputs['token_weight']))
         return inputs
 
@@ -277,6 +289,12 @@ class Model(object):
                     total_loss = total_loss.mean()
                     total_loss.backward(retain_graph=False)
                     grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
+
+                    # # # not update teacher param during adaptation
+                    # if cfg.temp_var:
+                    for param in self.m.teacher.parameters():
+                        param.grad *= 0
+
                     optim.step()
                     sup_loss += float(total_loss)
                     sup_cnt += 1
@@ -485,6 +503,7 @@ class Model(object):
             sup_cnt = 0
             optim = self.optim
             meta_optim = self.meta_optim
+            # meta_optim = Adam(lr = cfg.meta_lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=1e-5)
             # teacher_optim = self.teacher_optim
 
             btm = time.time()
@@ -515,8 +534,7 @@ class Model(object):
                         self.m.load_state_dict(init_state)
                         optim.zero_grad()
 
-                        # print(turn_batch['turn_num'])
-                        # pdb.set_trace()
+
                         first_turn = (turn_num==0)
                         inputs = self.reader.convert_batch(turn_batch, py_prev[dom], first_turn=first_turn)
                         inputs = self.add_torch_input(inputs, first_turn=first_turn)
@@ -555,11 +573,19 @@ class Model(object):
                     loss_meta = torch.stack(loss_doms).sum(0) / self.domain_num
                     loss_meta.backward()
                     grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
-
+                    
+                    # print(self.m.teacher.trans.layers[0].linear1.weight.grad)
+                    # pdb.set_trace()
                     if cfg.maxmin:
                         for param in self.m.teacher.parameters():
                             param.grad *= -1
+                    # print(self.m.teacher.trans.layers[0].linear1.weight.grad)
+                    # print(self.m.teacher.trans.layers[0].linear1.weight)
+                    # pdb.set_trace()
                     meta_optim.step()
+
+                    # print(self.m.teacher.trans.layers[0].linear1.weight)
+                    # pdb.set_trace()
 
                     losses_meta = defaultdict(float)
                     for losses in losses_doms:
@@ -612,6 +638,7 @@ class Model(object):
             py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
             for turn_num, turn_batch in enumerate(dial_batch):
 
+                self.m.load_state_dict(init_state)
                 
                 first_turn = (turn_num==0)
                 inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn)
@@ -665,7 +692,7 @@ class Model(object):
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn'] if cfg.use_true_prev_dspn else decoded['dspn']
                 count += 1
-                torch.cuda.empty_cache()
+                torch.cuda.empty_cache()                
 
                 if cfg.token_weight == -1:
                     teacher_model_state = {k:v for k,v in self.m.state_dict().items() if 'teacher' in k}
@@ -708,6 +735,10 @@ class Model(object):
                 turn_batch['aspn_gen'] = decoded['aspn'] if cfg.enable_aspn else [[0]] * len(decoded['resp'])
                 turn_batch['dspn_gen'] = decoded['dspn'] if cfg.enable_dspn else [[0]] * len(decoded['resp'])
 
+
+                if cfg.token_weight == -1:
+                    turn_batch['token_weight'] = decoded['token_weight']
+
                 if self.reader.multi_acts_record is not None:
                     turn_batch['multi_act_gen'] = self.reader.multi_acts_record
                 if cfg.record_mode:
@@ -729,6 +760,24 @@ class Model(object):
             quit()
         results, field = self.reader.wrap_result(result_collection)
         self.reader.save_result('w', results, field)
+        # pdb.set_trace()
+
+
+        result_weight = []
+        field_weight = ['dial_id', 'turn_num','resp']
+        for turn in results:
+            result_weight.append({i:turn[i] for i in field_weight})
+            result_weight[-1]['r_gen'] = turn['resp_gen']
+
+            if type(turn['token_weight']) != str:
+                weights = turn['token_weight'][turn['token_weight'].nonzero().squeeze()].tolist()
+                result_weight[-1]['token_weight'] = '  '.join(['{:.3f}'.format(weight) for weight in weights])
+                
+        # result_weight = [{i:y[i] for i in field_weight} for y in results]
+        with open('.'.join(cfg.result_path.split('.')[:-1])+'_weight.json', 'w') as rf:
+            json.dump(result_weight, rf, indent=4)
+
+
 
         metric_results = self.evaluator.run_metrics(results)
         metric_field = list(metric_results[0].keys())
@@ -827,9 +876,10 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-mode', default ='train_maml')
+    parser.add_argument('-dataset', default ='multiwoz')
     parser.add_argument('-cfg', nargs='*')
     args = parser.parse_args()
-
+    # pdb.set_trace()
     if '_' in args.mode:
         cfg.mode = args.mode.split('_')[0]
         cfg.alg = args.mode.split('_')[-1]
@@ -864,12 +914,15 @@ def main():
             cfg.eval_load_path = cfg.exp_path
 
         cfg.model_path = os.path.join(cfg.eval_load_path, 'model.pkl')
-        cfg.test_dir = os.path.join(cfg.eval_load_path, 
-                                    'test_' + cfg.data_path.split('/')[-2])
+
+        if cfg.test_dir == '':
+            adapt_num = cfg.data_path.split('/')[-3].split('_')[-1]
+            cfg.test_dir = os.path.join(cfg.eval_load_path, 
+                           adapt_num + 'test_' + cfg.data_path.split('/')[-2])
 
         if not os.path.exists(cfg.test_dir):
             os.mkdir(cfg.test_dir)
-
+  
         cfg.adapt_model_path = os.path.join(cfg.test_dir, 'model_adapt.pkl')
         cfg.result_path = os.path.join(cfg.test_dir, 'result.csv')
         cfg.vocab_path_eval = os.path.join(cfg.eval_load_path, 'vocab')
@@ -885,6 +938,7 @@ def main():
             setattr(cfg, k, v)
 
         cfg._init_logging_handler(log_dir = cfg.test_dir)
+        # cfg.init_handler(dataset, log_dir = cfg.test_dir)
     else:
 
         cfg.model_path = os.path.join(cfg.exp_path, 'model.pkl')
@@ -893,6 +947,7 @@ def main():
         cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
         cfg.eval_load_path = cfg.exp_path
         cfg._init_logging_handler(log_dir = cfg.exp_path)
+        # cfg.init_handler(dataset, log_dir = cfg.exp_path)
 
     if cfg.cuda:
         if len(cfg.cuda_device)==1:
@@ -908,7 +963,7 @@ def main():
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
 
-    m = Model()
+    m = Model(args.dataset)
     cfg.model_parameters = m.count_params()
     logging.info(str(cfg))
 
@@ -919,15 +974,16 @@ def main():
                 json.dump(cfg.__dict__, f, indent=2)
         m.load_glove_embedding()
         m.train_maml()
-
         m.load_model(cfg.model_path)
         m.adapt()
+        m.load_model(cfg.adapt_model_path)
         m.eval_maml(data='test')
 
 
     elif args.mode == 'adapt_test':
         m.load_model(cfg.model_path)
         m.adapt()
+        m.load_model(cfg.adapt_model_path)
         m.eval_maml(data='test')
 
 

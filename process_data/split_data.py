@@ -49,17 +49,18 @@ def main():
     # pdb.set_trace()
 
     # target_dir = data_path
-    adapt_dial_num = 9
+    adapt_dial_num = 200
     # test_dial_num = 200
     # test_dial_num_string = 'other' if test_dial_num > 300 else str(test_dial_num)
     sys.stdout.write('extract ' + str(adapt_dial_num) + ' dialogs for adaptation and other dialogs for test\n')
 
 
     for i in range(10):
+        random.seed(i)
         target_dir = './data/multi-woz-processed/adapt_' + str(adapt_dial_num) + '/' + str(i) + '/'
 
         if not os.path.exists(target_dir):
-            os.mkdir(target_dir)
+            os.makedirs(target_dir)
 
         single_domain_list = []
         for domain in domain_files:
@@ -87,7 +88,7 @@ def main():
 
                         json.dump(minor_data_in_domain, minor_file, indent = 4)
 
-                        sys.stdout.write('complete extracting ' + str(adapt_dial_num) + ' dialogs for adaptation in ' + domain_name + ' domain ...\n')
+                        # sys.stdout.write('complete extracting ' + str(adapt_dial_num) + ' dialogs for adaptation in ' + domain_name + ' domain ...\n')
 
                     # # # extract the rest as test data
                     with open(os.path.join(target_dir, 'test_data_in_domain_' + domain_name + '.json'), 'w') as file:
@@ -101,7 +102,7 @@ def main():
 
                         json.dump(data_in_domain, file, indent = 4)
 
-                        sys.stdout.write('complete extracting ' + str(len(domain_files[domain][adapt_dial_num:])) + ' dialogs for test in ' + domain_name + ' domain ...\n')
+                        # sys.stdout.write('complete extracting ' + str(len(domain_files[domain][adapt_dial_num:])) + ' dialogs for test in ' + domain_name + ' domain ...\n')
 
                     # # # extract all the single-domain data for training
                     with open(os.path.join(target_dir, 'data_in_domain_' + domain_name + '.json'), 'w') as file:
@@ -113,8 +114,12 @@ def main():
 
                         json.dump(data_in_domain, file, indent = 4)
 
-                        sys.stdout.write('complete extracting ' + str(len(domain_files[domain])) + ' dialogs for training in ' + domain_name + ' domain ...\n\n')
+                        # sys.stdout.write('complete extracting ' + str(len(domain_files[domain])) + ' dialogs for training in ' + domain_name + ' domain ...\n\n')
 
+                sys.stdout.write('Complete extracting {}/{}/{}'.format(adapt_dial_num,
+                                                                       len(domain_files[domain][adapt_dial_num:]), 
+                                                                       len(domain_files[domain])) + ' dialogs for adapt/test/train in ' + domain_name + ' domain ...\n')
+        sys.stdout.write('Finish for random set ' + str(i) + ' ...\n\n')
 
 
     data_json.close()

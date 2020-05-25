@@ -34,7 +34,7 @@ class TeacherModel(nn.Module):
         self.linear = nn.Linear(input_size, 1)
 
 
-    def forward(self, true_enc, usdx_enc):
+    def forward(self, true_enc, usdx_enc, resp):
         """
         input: ground truth, context, utt
         output: weight
@@ -43,6 +43,14 @@ class TeacherModel(nn.Module):
 
         trans_output = self.trans(trans_input)
 
-        weights = F.softmax(self.linear(trans_output[:,:true_enc.shape[1],:]), dim=1) * 10 + 0.5
+        linear_out = self.linear(trans_output.narrow(1,0,true_enc.shape[1])).squeeze(2)
 
-        return weights
+        # weights_norm = F.softmax(linear_out, dim=1) * 10 + 0.5
+
+        weights = linear_out.masked_fill(resp==0, float('-inf'))
+
+        weights_norm = F.softmax(weights, dim=1) * 10 + 0.5
+
+        weights_norm2 = weights_norm.masked_fill(resp==0, 0)
+        # pdb.set_trace()
+        return weights_norm2
