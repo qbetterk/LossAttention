@@ -49,7 +49,7 @@ def main():
     # pdb.set_trace()
 
     # target_dir = data_path
-    adapt_dial_num = 200
+    adapt_dial_num = 400
     # test_dial_num = 200
     # test_dial_num_string = 'other' if test_dial_num > 300 else str(test_dial_num)
     sys.stdout.write('extract ' + str(adapt_dial_num) + ' dialogs for adaptation and other dialogs for test\n')
@@ -81,28 +81,14 @@ def main():
 
                     # # # extract adaptation data
                     with open(os.path.join(target_dir, 'adapt_data_in_domain_' + domain_name + '.json'), 'w') as minor_file:
-                        minor_data_in_domain = {}
-                        for minor_dial_name in domain_files[domain][:adapt_dial_num]:
-                            dial_id = minor_dial_name.split('.')[0]
-                            minor_data_in_domain[dial_id] = data[dial_id]
+                        adapt_data_in_domain = {}
+                        for adapt_dial_name in domain_files[domain][:adapt_dial_num]:
+                            dial_id = adapt_dial_name.split('.')[0]
+                            adapt_data_in_domain[dial_id] = data[dial_id]
 
-                        json.dump(minor_data_in_domain, minor_file, indent = 4)
+                        json.dump(adapt_data_in_domain, minor_file, indent = 4)
 
                         # sys.stdout.write('complete extracting ' + str(adapt_dial_num) + ' dialogs for adaptation in ' + domain_name + ' domain ...\n')
-
-                    # # # extract the rest as test data
-                    with open(os.path.join(target_dir, 'test_data_in_domain_' + domain_name + '.json'), 'w') as file:
-                        data_in_domain = {}
-
-                        # end_idx = min(len(domain_files[domain]), adapt_dial_num + test_dial_num)
-
-                        for dial_name in domain_files[domain][adapt_dial_num:]:
-                            dial_id = dial_name.split('.')[0]
-                            data_in_domain[dial_id] = data[dial_id]
-
-                        json.dump(data_in_domain, file, indent = 4)
-
-                        # sys.stdout.write('complete extracting ' + str(len(domain_files[domain][adapt_dial_num:])) + ' dialogs for test in ' + domain_name + ' domain ...\n')
 
                     # # # extract all the single-domain data for training
                     with open(os.path.join(target_dir, 'data_in_domain_' + domain_name + '.json'), 'w') as file:
@@ -116,8 +102,28 @@ def main():
 
                         # sys.stdout.write('complete extracting ' + str(len(domain_files[domain])) + ' dialogs for training in ' + domain_name + ' domain ...\n\n')
 
+                    # # # extract the rest as test data
+                    with open(os.path.join(target_dir, 'test_data_in_domain_' + domain_name + '.json'), 'w') as file:
+                        test_data_in_domain = {}
+
+                        # end_idx = min(len(domain_files[domain]), adapt_dial_num + test_dial_num)
+                        if len(domain_files[domain]) - adapt_dial_num <= 50:
+                            test_data_in_domain = data_in_domain
+                            test_dial_num = len(domain_files[domain])
+                        else:
+                            for test_dial_name in domain_files[domain][adapt_dial_num:]:
+                                dial_id = test_dial_name.split('.')[0]
+                                test_data_in_domain[dial_id] = data[dial_id]
+                            test_dial_num = len(domain_files[domain][adapt_dial_num:])
+
+                        # pdb.set_trace()
+
+                        json.dump(test_data_in_domain, file, indent = 4)
+
+                        # sys.stdout.write('complete extracting ' + str(len(domain_files[domain][adapt_dial_num:])) + ' dialogs for test in ' + domain_name + ' domain ...\n')
+
                 sys.stdout.write('Complete extracting {}/{}/{}'.format(adapt_dial_num,
-                                                                       len(domain_files[domain][adapt_dial_num:]), 
+                                                                       test_dial_num, 
                                                                        len(domain_files[domain])) + ' dialogs for adapt/test/train in ' + domain_name + ' domain ...\n')
         sys.stdout.write('Finish for random set ' + str(i) + ' ...\n\n')
 

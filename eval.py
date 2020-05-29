@@ -473,9 +473,16 @@ class MultiWozEvaluator(object):
                         if len(split_act) != 3:
                             if '' in split_act:
                                 split_act.remove('')
+                                d,a,s = split_act
+                            elif len(split_act) > 3:
+                                # pdb.set_trace()
+                                d = split_act[0]
+                                a = split_act[1]
+                                s = '_'.join(split_act[2:])
                             else:
                                 pdb.set_trace()
-                        d,a,s = split_act
+                        else:
+                            d,a,s = split_act
                         if d + '-' + a not in act_collect:
                             act_collect[d + '-' + a] = {s:1}
                             slot_score += 1
